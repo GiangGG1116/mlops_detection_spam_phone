@@ -1,0 +1,180 @@
+# risk_config.yaml
+
+# 1) Ngưỡng model → level
+model_thresholds:
+  # mỗi item là [threshold, level]
+  # score < threshold => level
+  - [0.30, 0]   # score < 0.30 → level 0
+  - [0.50, 1]   # [0.30, 0.50)  → level 1
+  - [0.70, 2]   # [0.50, 0.70)  → level 2
+  - [0.85, 3]   # [0.70, 0.85)  → level 3
+  - [1.01, 4]   # [0.85, 1.00]  → level 4
+
+# 2) Rule: quốc tế
+# Mọi số quốc tế đều có rủi ro nền (vì hay có pattern nhá máy / lừa đảo gọi lại).
+# Giá trị là level tối thiểu khi detect số quốc tế.
+intl_any_number_level: 2
+
+# Các mã quốc gia (country code) thường xuất hiện trong danh sách cảnh báo → tăng level mạnh hơn
+intl_risk_prefixes:
+  - "224"
+  - "231"
+  - "232"
+  - "247"
+  - "252"
+  - "255"
+  - "370"
+  - "371"
+  - "375"
+  - "381"
+  - "563"
+
+# 3) Rule: nội địa nhạy cảm (tín hiệu mềm, KHÔNG auto-spam)
+domestic_risk_prefixes:
+  - "1900"   # dịch vụ tính phí
+  - "022"    # cố định, hay nhá máy (mở rộng)
+  - "024"    # cố định, hay bị dùng trong scam/nhá máy
+  - "026"
+  - "028"
+
+# 4) Số nằm trong blacklist cứng (từ báo/chuyên gia/nguồn công khai)
+hard_blacklist_numbers:
+  # quốc tế cụ thể
+  - "+8919008198"
+  - "+4422222202"
+  - "+22382271520"
+  - "+22379262886"
+  - "+22375260052"
+
+  # 1900...
+  - "19003439"
+  - "19004510"
+  - "19002191"
+  - "19003441"
+  - "19002170"
+  - "19002446"
+  - "19001095"
+  - "19002190"
+  - "19002196"
+  - "19004562"
+  - "19003440"
+  - "19001199"
+
+  # 024...
+  - "02439446395"
+  - "02499950060"
+  - "02499954266"
+  - "0249997041"
+  - "02444508888"
+  - "02499950412"
+  - "0249997037"
+  - "02499997044"
+  - "02499950212"
+  - "02499950036"
+  - "0249997038"
+  - "0249992623"
+  - "0249997035"
+  - "0249994266"
+  - "02499985212"
+  - "0245678520"
+  - "02499985220"
+  - "0249997044"
+
+  # 028...
+  - "02899964439"
+  - "02856786501"
+  - "02899964438"
+  - "02899964437"
+  - "02873034653"
+  - "02899950012"
+  - "02873065555"
+  - "02899964448"
+  - "02822000266"
+  - "0287108690"
+  - "02899950015"
+  - "02899958588"
+  - "02871099082"
+  - "02899996142"
+
+# 5) Ngưỡng & luật hành vi (CDR) để cộng level
+# Bạn có thể map từ feature của bạn sang các field này.
+behavior_rules:
+  # Nhá máy / gọi cực ngắn (thường để dụ gọi lại)
+  short_call_seconds: 5
+  short_call_min_total: 2
+
+  # Tỷ lệ gọi nhỡ cao
+  miss_ratio_high: 0.60
+  miss_ratio_min_total: 5
+
+  # Tần suất gọi bất thường (nhiều lần/ngày) + thời lượng ngắn
+  high_freq_per_day: 10
+  high_freq_short_call_seconds: 10
+
+  # Ít người gọi lại (độ tin cậy thấp)
+  low_callback_rate: 0.10
+  low_callback_min_total: 5
+
+  # Ngoài giờ hành chính (nếu bạn có flag)
+  outside_business_hour_level: 2
+
+# 6) Điểm level từ rule (để không hard-code trong code)
+rule_levels:
+  hard_blacklist: 4
+  intl_base: 2
+  intl_prefix_boost_to: 3
+  domestic_prefix_base: 2
+  domestic_short_call_boost_to: 3
+  behavior_miss_ratio_to: 3
+  behavior_high_freq_to: 3
+  behavior_low_callback_to: 2
+
+# 7) Giảm level do whitelist/lịch sử tốt
+whitelist_adjustments:
+  in_contact_reduce: 2
+  good_history_reduce: 1
+  good_history_min_success_calls: 5
+  good_history_min_avg_in_duration: 60
+
+  # chặn giảm quá đà: nếu là số quốc tế thì không hạ dưới level này
+  intl_min_level_after_reduce: 1
+
+# 8) Message theo level (UI)
+level_messages:
+  "0":
+    title: "✅ Có vẻ an toàn"
+    subtitle: "Không phát hiện dấu hiệu bất thường."
+  "1":
+    title: "⚠️ Cần chú ý một chút"
+    subtitle: "Có một vài dấu hiệu lạ, nhưng chưa đủ để xác định là spam."
+  "2":
+    title: "⚠️ Có dấu hiệu nghi vấn"
+    subtitle: "Hệ thống phát hiện nhiều dấu hiệu giống cuộc gọi spam."
+  "3":
+    title: "🚫 Nguy cơ cao – Có thể là cuộc gọi lừa đảo"
+    subtitle: "Số điện thoại này có nhiều đặc điểm trùng với các cuộc gọi spam đã được ghi nhận."
+  "4":
+    title: "🛑 Rất có thể là cuộc gọi lừa đảo"
+    subtitle: "Số này trùng với mẫu hành vi spam/lừa đảo đã được hệ thống ghi nhận trước đó."
+
+# 9) Gợi ý hành động theo level (để FE hiển thị nút)
+actions_by_level:
+  "0": ["Nghe máy", "Lưu liên hệ"]
+  "1": ["Nghe thận trọng", "Báo cáo nếu nghi ngờ"]
+  "2": ["Cẩn thận", "Không chia sẻ OTP/thông tin", "Báo cáo"]
+  "3": ["Không nghe/Không gọi lại", "Báo cáo", "Chặn số"]
+  "4": ["Chặn ngay", "Báo cáo", "Tôi biết số này (Not spam)"]
+
+# 10) Template lý do (để giải thích)
+reason_templates:
+  model_score: "Điểm rủi ro từ mô hình: {score:.2f}."
+  hard_blacklist: "Số này thuộc danh sách cảnh báo lừa đảo được ghi nhận."
+  intl_any: "Cuộc gọi từ số quốc tế, cần cảnh giác."
+  intl_prefix: "Đầu số quốc tế +{prefix} thường xuất hiện trong các cảnh báo lừa đảo."
+  domestic_prefix: "Đầu số {prefix} thuộc nhóm nhạy cảm (cảnh báo mềm)."
+  short_call: "Nhiều cuộc gọi rất ngắn (≤ {sec}s), giống hành vi nháy máy."
+  miss_ratio: "Tỷ lệ cuộc gọi nhỡ cao ({ratio:.0%}), bất thường."
+  high_freq: "Tần suất gọi cao ({freq}/ngày) và thời lượng ngắn, giống pattern spam."
+  low_callback: "Tỷ lệ gọi lại thấp ({rate:.0%}), độ tin cậy thấp."
+  outside_hour: "Cuộc gọi chủ yếu ngoài giờ hành chính."
+  whitelist_reduce: "Đã giảm cảnh báo do số này thuộc danh bạ/lịch sử liên lạc tốt."

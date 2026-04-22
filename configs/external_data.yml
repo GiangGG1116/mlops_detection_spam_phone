@@ -1,0 +1,125 @@
+providers:
+  vietel:
+    - "86"
+    - "96"
+    - "97"
+    - "98"
+    - "32"
+    - "33"
+    - "34"
+    - "35"
+    - "36"
+    - "37"
+    - "38"
+    - "39"
+  mobi:
+    - "89"
+    - "90"
+    - "93"
+    - "70"
+    - "79"
+    - "77"
+    - "76"
+    - "78"
+  vina:
+    - "88"
+    - "91"
+    - "94"
+    - "83"
+    - "84"
+    - "85"
+    - "81"
+    - "82"
+  vnmobile:
+    - "92"
+    - "58"
+    - "56"
+  gmobile:
+    - "99"
+    - "59"
+  itelecom:
+    - "87"
+work_days: [2, 3, 4, 5, 6]
+
+type_map:
+  1: "call_in"
+  2: "call_to"
+  3: "call_in_miss"
+  4: "call_to_miss"
+
+landline:
+  'Son La' : '212' 
+  'Lai Chau' : '213' 
+  'Lao Cai' : '214' 
+  'Dien Bien' : '215' 
+  'Yen Bai' : '216' 
+  'Hoa Binh' : '218' 
+  'Quang Ninh' : '203' 
+  'Bac Giang' : '204' 
+  'Lang Son' : '205' 
+  'Cao Bang' : '206' 
+  'Tuyen Quang' : '207' 
+  'Thai Nguyen' : '208' 
+  'Bac Kan' : '209' 
+  'Phu Tho' : '210' 
+  'Ha Giang' : '219' 
+  'Vinh Phuc' : '211' 
+  'Hai Duong' : '220' 
+  'Hung Yen' : '221' 
+  'Bac Ninh' : '222' 
+  'Ha Noi' : '24' 
+  'Hai Phong' : '225' 
+  'Ha Nam' : '226' 
+  'Thai Binh' : '227' 
+  'Nam Dinh' : '228' 
+  'Ninh Binh' : '229' 
+  'Quang Binh' : '232' 
+  'Quang Tri' : '233' 
+  'Thua Thien - Hue' : '234' 
+  'Thanh Hoa' : '237' 
+  'Nghe An' : '238' 
+  'Ha Tinh' : '239' 
+  'Quang Nam' : '235' 
+  'Da Nang' : '236' 
+  'Binh Thuan' : '252' 
+  'Quang Ngai' : '255' 
+  'Binh Dinh' : '256' 
+  'Phu Yen' : '257' 
+  'Khanh Hoa' : '258' 
+  'Ninh Thuan' : '259' 
+  'Kon Tum' : '260' 
+  'Dac Nong' : '261' 
+  'Dak Lak' : '262' 
+  'Lam Dong' : '263' 
+  'Gia Lai' : '269' 
+  'Thanh pho Ho Chi Minh' : '28' 
+  'Dong Nai' : '251' 
+  'Ba Ria - Vung Tau' : '254' 
+  'Binh Phuoc' : '271' 
+  'Binh Duong' : '274' 
+  'Tay Ninh' : '276' 
+  'Vinh Long' : '270' 
+  'Long An' : '272' 
+  'Tien Giang' : '273' 
+  'Ben Tre' : '275' 
+  'Dong Thap' : '277' 
+  'Ca Mau' : '290' 
+  'Bac Lieu' : '291' 
+  'Can Tho' : '292' 
+  'Hau Giang' : '293' 
+  'Tra Vinh' : '294' 
+  'An Giang' : '296' 
+  'Kien Giang' : '297' 
+  'Soc Trang' : '299' 
+switchboard:
+  'VTC': '2361091'
+  'VNPT': '241098'
+  'VTC': '241091'
+  'vina': '241083'
+  'vina': '241077'
+  'vina': '1094'
+  'mobi': '1077'
+  'viettel': '198'
+  'viettel': '197'
+
+

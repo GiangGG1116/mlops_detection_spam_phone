@@ -1,0 +1,26 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual environments
+.venv/
+venv/
+
+# Runtime artifacts
+data/predictions/*.json
+data/predictions/*.jsonl
+data/predictions/*.csv
+data/train/feedback_labels.csv
+data/train/changed_rows.csv
+data/train/label_merged.csv
+
+# Model artifacts
+models/candidates/
+models/archive/
+models/best_xgb_params.json
+
+# OS/editor
+.DS_Store
+.vscode/
+.idea/

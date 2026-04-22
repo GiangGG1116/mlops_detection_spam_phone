@@ -1,0 +1,44 @@
+{
+  "data_path": "data/train/label.csv",
+  "label_col": "label",
+  "dropped_cols": [
+    "phone",
+    "Score"
+  ],
+  "n_rows_used": 145964,
+  "n_features": 45,
+  "scale_pos_weight": 1.0,
+  "auc_val": 0.9985095805827575,
+  "best_iteration": 1865,
+  "threshold@0.5": 0.5,
+  "accuracy@0.5": 0.9797896756071661,
+  "precision@0.5": 0.9748440466503933,
+  "recall@0.5": 0.9849958892847356,
+  "f1@0.5": 0.9798936750272628,
+  "confusion_matrix@0.5": [
+    [
+      14226,
+      371
+    ],
+    [
+      219,
+      14377
+    ]
+  ],
+  "threshold_best": 0.55,
+  "threshold_search_step": 0.01,
+  "accuracy@best": 0.9800637139040181,
+  "precision@best": 0.9779020597462829,
+  "recall@best": 0.9823239243628391,
+  "f1@best": 0.9801080046483013,
+  "confusion_matrix@best": [
+    [
+      14273,
+      324
+    ],
+    [
+      258,
+      14338
+    ]
+  ]
+}

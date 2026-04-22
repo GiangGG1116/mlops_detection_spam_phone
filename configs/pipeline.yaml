@@ -1,0 +1,31 @@
+data:
+  report_source: data/input/phone_reports_processed(1).parquet
+  history_source: data/input/call_histories_last_120d_2025-09-14_to_2026-01-11.parquet
+  external_data_yaml: configs/external_data.yml
+
+  predictions_json: data/predictions/pred_by_phone.json
+  prediction_debug_csv: data/predictions/predict_debug.csv
+
+  feedback_label_csv: data/train/feedback_labels.csv
+  changed_rows_csv: data/train/changed_rows.csv
+
+  base_train_dataset: data/train/label.csv
+  merged_train_dataset: data/train/label_merged.csv
+
+model:
+  production_model: models/production/xgb.pkl
+  production_feature_columns: models/production/feature_columns.json
+  production_metrics: models/production/train_metrics.json
+
+  candidates_dir: models/candidates
+  archive_dir: models/archive
+  best_params_json: models/best_xgb_params.json
+
+settings:
+  report_days: 100
+  history_days: 90
+  timezone: Asia/Ho_Chi_Minh
+
+  tune_trials: 5
+  tune_timeout_seconds: 1800
+  min_delta: 0.000001
