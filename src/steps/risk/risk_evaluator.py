@@ -1,9 +1,9 @@
 """
 risk_evaluator.py
 -----------------
-Đánh giá mức độ rủi ro của một số điện thoại dựa trên:
+Evaluate phone number risk level based on:
   1. Model score (XGBoost probability)
-  2. Rule-based: blacklist, prefix quốc tế/nội địa nhạy cảm, hành vi gọi
+    2. Rule-based signals: blacklist, sensitive international/domestic prefixes, call behavior
 
 Output: final_level (0-4) + title + reasons
 """
@@ -152,7 +152,7 @@ def _match_country_code(digits: str) -> str:
 
 def _parse_is_international_and_prefix(phone: str) -> Tuple[bool, str]:
     """
-    Phân loại số điện thoại: nội địa VN hay quốc tế.
+    Classify phone number as domestic VN or international.
     Return: (is_international, prefix)
     """
     p = (phone or "").strip()
@@ -208,7 +208,7 @@ def _parse_is_international_and_prefix(phone: str) -> Tuple[bool, str]:
 # Feature extraction
 # =========================
 def row_to_risk_features(row: Dict[str, Any]) -> Dict[str, Any]:
-    """Trích xuất features dùng cho rule-based evaluation từ một row predict."""
+    """Extract rule-based evaluation features from one prediction row."""
     phone = _normalize_phone(row.get("phone"))
     is_international, prefix = _parse_is_international_and_prefix(phone)
 
@@ -353,16 +353,16 @@ def evaluate_phone_risk(
     config: dict = RISK_CONFIG,
 ) -> Dict[str, Any]:
     """
-    Đánh giá tổng hợp mức độ rủi ro của số điện thoại.
+    Evaluate the overall risk level of a phone number.
 
     Args:
-        phone: Số điện thoại cần đánh giá
-        model_score: Xác suất spam từ XGBoost model (0.0 - 1.0)
-        features: Dict features từ row_to_risk_features()
-        config: Risk config dict (mặc định RISK_CONFIG)
+        phone: Phone number to evaluate
+        model_score: Spam probability from the XGBoost model (0.0 - 1.0)
+        features: Feature dict from row_to_risk_features()
+        config: Risk config dict (defaults to RISK_CONFIG)
 
     Returns:
-        Dict gồm: final_level, model_level, rule_level, title, subtitle, reasons
+        Dict with: final_level, model_level, rule_level, title, subtitle, reasons
     """
     model_level = get_model_level(model_score, config)
 

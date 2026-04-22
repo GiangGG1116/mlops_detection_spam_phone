@@ -23,13 +23,13 @@ def build_prefix_provider_table(con: duckdb.DuckDBPyConnection,
                                 providers_lib: Dict[str, List[str]],
                                 table_name: str = "prefix_provider") -> None:
     """
-    providers_lib dạng:
+        providers_lib format:
       {
         "viettel": ["0981","0982",...],
         "vina":    ["0912",...],
         ...
       }
-    Tạo TEMP TABLE: prefix_provider(prefix, provider)
+        Create TEMP TABLE: prefix_provider(prefix, provider)
     """
     con.execute(f"CREATE OR REPLACE TEMP TABLE {table_name}(prefix VARCHAR, provider VARCHAR)")
     rows: List[Tuple[str, str]] = []
@@ -46,7 +46,7 @@ def build_prefix_provider_table(con: duckdb.DuckDBPyConnection,
 # ---------------------------
 def create_raw_view(con: duckdb.DuckDBPyConnection, in_path: str, ext: str = "parquet") -> None:
     """
-    Tạo view raw từ file. KHÔNG dùng prepared parameter cho CREATE VIEW để tránh BinderException.
+    Create raw view from file. Do NOT use prepared parameters with CREATE VIEW to avoid BinderException.
     """
     p = _sql_quote(in_path)
     ext = (ext or "").lower().strip()
@@ -74,28 +74,28 @@ def build_features_duckdb(
     out_parquet: Optional[str] = None,
 ) -> duckdb.DuckDBPyConnection:
     """
-    Chạy full pipeline và (tuỳ chọn) ghi ra parquet.
-    Output cuối: TEMP VIEW final_features
+    Run the full pipeline and optionally write parquet output.
+    Final output: TEMP VIEW final_features
     """
     external_data = load_external_data(external_yaml)
 
     providers_lib = external_data.get("providers", {}) or {}
     work_days = external_data.get("work_days", [0, 1, 2, 3, 4])  # pandas dayofweek: Mon=0..Sun=6
-    # type_map trong code gốc không cần cho DuckDB vì type 1..4 đã cố định
+    # type_map from the original code is not needed in DuckDB because type 1..4 is fixed
 
     work_days_sql = ",".join(str(int(x)) for x in work_days)
 
     con = duckdb.connect(database=":memory:")
-    # (tuỳ chọn) tối ưu cho máy RAM thấp
+    # (optional) optimize for low-memory machines
     con.execute("PRAGMA threads=2;")
-    # con.execute("PRAGMA memory_limit='3GB';")  # nếu muốn giới hạn
+    # con.execute("PRAGMA memory_limit='3GB';")  # set this if memory limiting is needed
 
     create_raw_view(con, in_path, ext=ext)
     build_prefix_provider_table(con, providers_lib)
 
-    # 1) get_valid_data (lọc + remove prefix + digits-only + parse time)
-    #    - remove '+' rồi remove '84' ở đầu
-    #    - length: BETWEEN 4 AND 18 (đúng theo đoạn drop len <4 hoặc >18)
+    # 1) get_valid_data (filter + strip prefix + digits-only + parse time)
+    #    - remove '+' then remove leading '84'
+    #    - length: BETWEEN 4 AND 18 (matches original drop rules: len <4 or >18)
     #    - digits-only: regexp_full_match(phone, '^[0-9]+$')
     #    - parse time: TRY_CAST
     con.execute(f"""
@@ -129,7 +129,7 @@ def build_features_duckdb(
         AND regexp_full_match(phone_member, '^[0-9]+$')
     """)
 
-    # 2) features_engineering + get_dummies_variables (OHE bằng CASE)
+    # 2) features_engineering + get_dummies_variables (OHE via CASE)
     #    - same_network: map prefix(4) -> provider, default 'others'
     #    - in_hour: 7..19 AND dayofweek in work_days
     #      pandas dayofweek: Mon=0..Sun=6
@@ -182,8 +182,8 @@ def build_features_duckdb(
     FROM ohe
     """)
 
-    # 3) group_by_phone (aggregate theo report) + frequency/median-diff + per-member median sum
-    #    KHÔNG dùng FILTER, dùng CASE/CTE để tương thích tốt.
+    # 3) group_by_phone (aggregate by report) + frequency/median-diff + per-member median sum
+    #    Do not use FILTER; use CASE/CTE for better compatibility.
     con.execute(r"""
     CREATE OR REPLACE TEMP VIEW agg_report AS
     WITH
@@ -434,7 +434,7 @@ def build_features_duckdb(
         CASE WHEN call_in = 0 THEN 0 ELSE duration_call_in * 1.0 / call_in END AS avg_duration_call_in,
 
         -- =========================
-        -- derived (giữ đúng theo code gốc)
+        -- derived (kept consistent with the original code)
         -- =========================
         call_to * frequency AS call_to_miss_mul_frequency,
 
@@ -445,7 +445,7 @@ def build_features_duckdb(
 
         frequency * in_hour AS frequency_mul_in_hour,
 
-        -- code gốc đặt tên "call_to_miss_frequency_in_hour" nhưng dùng call_in_miss_rate
+        -- original code names this "call_to_miss_frequency_in_hour" but uses call_in_miss_rate
         (CASE WHEN denom_calls = 0 THEN 0 ELSE call_in_miss * 1.0 / denom_calls END) * (frequency * in_hour)
             AS call_to_miss_frequency_in_hour,
 
@@ -461,7 +461,7 @@ def build_features_duckdb(
 
         in_hour * avg_success AS in_hour_mul_avg_success,
 
-        -- code gốc: call_in_div_call_to_mul_in_hour_mul_avg_success =
+        -- original code: call_in_div_call_to_mul_in_hour_mul_avg_success =
         -- frequency_in_hour_mul_duration_call_to * call_in_div_call_to
         ((frequency * in_hour) * duration_call_to)
             * ((call_in + call_in_miss) * 1.0 / (call_to + call_in_miss + 1))

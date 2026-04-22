@@ -1,0 +1,18 @@
+.git
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+
+.venv
+venv
+
+# Large local artifacts
+data/feedback
+data/input
+data/output
+data/output1
+data/out3
+models/candidates
+models/archive
+mlruns

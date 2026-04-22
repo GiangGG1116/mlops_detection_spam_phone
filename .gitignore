@@ -8,6 +8,7 @@ __pycache__/
 venv/
 
 # Runtime artifacts
+data/**
 data/predictions/*.json
 data/predictions/*.jsonl
 data/predictions/*.csv

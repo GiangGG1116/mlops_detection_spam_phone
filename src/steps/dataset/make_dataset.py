@@ -11,17 +11,18 @@ def export_last_n_days_call_histories(
     threads: int = 4,
 ) -> str:
     """
-    Mỗi lần chạy:
-      end_date   = ngày hiện tại theo tz
-      start_date = end_date - (days-1) ngày  (đảm bảo đủ đúng 'days' ngày, inclusive)
-    Lấy các cột:
-      phone_member (từ member_id), phone, report (copy từ phone), spam (=0), type, time, in_contact, duration
-    rồi lưu ra parquet trong out_dir.
+    For each run:
+      end_date   = current date in timezone `tz`
+      start_date = end_date - (days - 1) days (inclusive range with exactly `days` days)
+    Select columns:
+      phone_member (from member_id), phone, report (copied from phone), spam (=0),
+      type, time, in_contact, duration
+    then save to parquet in out_dir.
 
     Returns:
-        out_path (đường dẫn file parquet đã lưu)
+        out_path (saved parquet file path)
     """
-    # 1) Tính ngày theo timezone
+    # 1) Compute dates in the provided timezone
     end_d = datetime.now(ZoneInfo(tz)).date()
     start_d = end_d - timedelta(days=days - 1)
 
@@ -61,8 +62,8 @@ def export_last_n_days_call_histories(
     """)
 
     con.close()
-    print(f"✅ Exported last {days} days: {start_date} -> {end_date}")
-    print("✅ Wrote:", out_path)
+    print(f"Exported last {days} days: {start_date} -> {end_date}")
+    print("Wrote:", out_path)
     return out_path
 
 
@@ -74,15 +75,15 @@ def export_last_n_days_report(
     threads: int = 4,
 ) -> str:
     """
-    Export dữ liệu last N days nhưng:
-      - SELECT * (giữ nguyên toàn bộ cột, không rename)
-      - Output giữ nguyên tên file như input (basename)
-      - Lọc theo cột thời gian ưu tiên: report_time -> time
-      - Lọc date inclusive: [end - (days-1), end] theo timezone tz
+    Export data for the last N days with these rules:
+      - SELECT * (keep all columns, no rename)
+      - Keep the output filename identical to input (basename)
+      - Filter by preferred time column: report_time -> time
+      - Use inclusive date window: [end - (days-1), end] in timezone `tz`
 
     Returns: out_path
     """
-    # 1) Tính khoảng ngày theo timezone
+    # 1) Compute date window in the provided timezone
     end_d = datetime.now(ZoneInfo(tz)).date()
     start_d = end_d - timedelta(days=days - 1)
     start_date = start_d.isoformat()
@@ -90,7 +91,7 @@ def export_last_n_days_report(
 
     os.makedirs(out_dir, exist_ok=True)
 
-    # 2) Giữ nguyên tên file như input
+    # 2) Keep the same filename as the input
     out_path = os.path.join(out_dir, os.path.basename(in_path))
 
     in_sql = in_path.replace("'", "''")
@@ -99,7 +100,7 @@ def export_last_n_days_report(
     con = duckdb.connect()
     con.execute(f"PRAGMA threads={int(threads)};")
 
-    # 3) Dò cột thời gian để lọc
+    # 3) Detect the time column used for filtering
     schema_cols = con.execute(f"SELECT * FROM read_parquet('{in_sql}') LIMIT 0").df().columns
     cols_lower = {c.lower(): c for c in schema_cols}
 
@@ -110,14 +111,14 @@ def export_last_n_days_report(
     else:
         time_col = None
 
-    # 4) COPY giữ nguyên schema
+    # 4) COPY while preserving schema
     if time_col:
         where_clause = f"""
         WHERE DATE(TRY_CAST("{time_col}" AS TIMESTAMP))
           BETWEEN DATE '{start_date}' AND DATE '{end_date}'
         """
     else:
-        # Không có cột time/report_time => không lọc được theo ngày
+        # No time/report_time column found, so date filtering is skipped
         where_clause = ""
 
     con.execute(f"""
@@ -131,6 +132,6 @@ def export_last_n_days_report(
     """)
 
     con.close()
-    print(f"✅ Exported last {days} days: {start_date} -> {end_date}")
+    print(f"Exported last {days} days: {start_date} -> {end_date}")
     print(out_path)
     return out_path

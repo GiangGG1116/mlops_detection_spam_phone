@@ -40,7 +40,7 @@ def load_feature_cols(path: str):
 
 
 def resolve_feature_cols_path(feature_cols_arg: str | None, model_path: str) -> str | None:
-    """Nếu không truyền --feature_cols thì tự tìm feature_columns.json trong folder model."""
+    """If --feature_cols is not provided, auto-discover feature_columns.json next to the model."""
     if feature_cols_arg:
         return feature_cols_arg
     cand = os.path.join(os.path.dirname(model_path), "feature_columns.json")
@@ -48,24 +48,24 @@ def resolve_feature_cols_path(feature_cols_arg: str | None, model_path: str) -> 
 
 
 def align_features(X_df: pd.DataFrame, feature_cols: list) -> pd.DataFrame:
-    # add thiếu cột thì set 0 (fallback an toàn)
+    # Add missing columns with zero as a safe fallback
     for c in feature_cols:
         if c not in X_df.columns:
             X_df[c] = 0
-    # drop các cột thừa (để khớp đúng thứ tự)
+    # Drop extra columns and enforce training column order
     return X_df[feature_cols]
 
 
 def to_numeric_keep_nan(X_df: pd.DataFrame) -> pd.DataFrame:
-    """Giống train: ép numeric, giữ NaN (XGBoost xử lý NaN)."""
+    """Match training preprocessing: coerce to numeric and keep NaN (XGBoost handles NaN)."""
     for c in X_df.columns:
         X_df[c] = pd.to_numeric(X_df[c], errors="coerce")
-    # chỉ giữ numeric + float32 cho nhẹ
+    # Keep only numeric columns and cast to float32 for efficiency
     X_df = X_df.select_dtypes(include=["number"]).astype(np.float32)
     return X_df
 
 
-# ---------- map report->phone rồi SUM theo phone (DuckDB) ----------
+# ---------- map report->phone then SUM per phone (DuckDB) ----------
 def _pick_raw_table_with_report_phone(con):
     rows = con.execute("""
         SELECT table_schema, table_name
@@ -76,7 +76,7 @@ def _pick_raw_table_with_report_phone(con):
     """).fetchall()
 
     if not rows:
-        raise RuntimeError("Không tìm thấy table/view raw có đủ cột (report, phone) trong DuckDB connection.")
+        raise RuntimeError("No raw table/view with both (report, phone) columns was found in the DuckDB connection.")
 
     priority = {"raw": 0, "raw_view": 1, "history": 2, "call_history": 3, "data": 4}
     rows_sorted = sorted(rows, key=lambda x: priority.get(x[1].lower(), 999))
@@ -108,7 +108,7 @@ def aggregate_final_features_by_phone(con, feat_table="final_features") -> pd.Da
             sum_cols.append(col)
 
     if not sum_cols:
-        raise RuntimeError("Không có cột numeric nào để SUM trong final_features (sau khi exclude).")
+        raise RuntimeError("No numeric columns available to SUM in final_features (after exclusions).")
 
     sum_expr = ",\n        ".join([f'SUM(COALESCE(f."{c}", 0)) AS "{c}"' for c in sum_cols])
 
@@ -153,7 +153,7 @@ def predict(
       - write JSON output
       - (optional) write debug CSV
 
-    Returns: output list (đúng format json đã ghi ra file)
+    Returns: output list (same JSON schema as written to file)
     """
 
     in_path = load_data
@@ -168,7 +168,7 @@ def predict(
     # 1) Build features (DuckDB)
     con = build_features_duckdb(in_path, _external_yaml, ext=_ext, out_parquet=None)
 
-    # 2) Lấy df_pool (phone-level hoặc report-level)
+    # 2) Get df_pool (phone-level or report-level)
     if agg_by_phone:
         df_pool = aggregate_final_features_by_phone(con, feat_table="final_features")
         key_col = "phone"
@@ -176,29 +176,29 @@ def predict(
         df_pool = con.execute("SELECT * FROM final_features").df()
         key_col = "report"
         if "report" not in df_pool.columns:
-            raise ValueError("final_features không có cột 'report'.")
+            raise ValueError("final_features does not contain column 'report'.")
 
     if key_col not in df_pool.columns:
-        raise ValueError(f"df_pool không có cột key '{key_col}'.")
+        raise ValueError(f"df_pool does not contain key column '{key_col}'.")
 
-    # 3) Chuẩn bị X (drop đúng như train: phone + Score; và drop label/Spam nếu có)
+    # 3) Prepare X (match training drops: phone + Score, and drop label/Spam if present)
     drop_cols = [c for c in [key_col, "report", "phone", "Spam", "label", "Score"] if c in df_pool.columns]
     X_df = df_pool.drop(columns=drop_cols, errors="ignore")
 
-    # 4) Align feature columns theo training
+    # 4) Align feature columns to training schema
     feature_cols_path = resolve_feature_cols_path(feature_cols, load_model)
     feature_cols_list = load_feature_cols(feature_cols_path) if feature_cols_path else None
     if feature_cols_list:
         X_df = align_features(X_df, feature_cols_list)
 
-    # 5) To numeric (giữ NaN) + numpy float32
+    # 5) Convert to numeric (keep NaN) + numpy float32
     X_df = to_numeric_keep_nan(X_df)
     X = X_df.to_numpy(dtype=np.float32, copy=False)
 
-    # 6) Load model + predict (score = proba[:,1], pred theo threshold)
+    # 6) Load model + predict (score = proba[:,1], class from threshold)
     model = joblib.load(load_model)
     if not hasattr(model, "predict_proba"):
-        raise RuntimeError("Model không có predict_proba(). Bạn đang load đúng XGBClassifier chứ?")
+        raise RuntimeError("Model does not expose predict_proba(). Make sure you loaded an XGBClassifier.")
 
     y_score = model.predict_proba(X)[:, 1]
     thr = float(threshold)

@@ -71,7 +71,7 @@ def _find_best_threshold_f1(
     y_true = np.asarray(y_true).astype(int)
     y_score = np.asarray(y_score).astype(float)
 
-    # Nếu val chỉ có 1 class => không tối ưu được threshold
+    # If validation has only one class, threshold optimization is not possible
     if len(np.unique(y_true)) < 2:
         t = 0.5
         pred = (y_score >= t).astype(int)
@@ -354,7 +354,7 @@ def train_xgb_for_your_schema(
 
     proba = model.predict_proba(X_val_np)[:, 1]
 
-    # best threshold theo F1
+    # Best threshold by F1
     best_thr = _find_best_threshold_f1(y_val_np, proba, step=0.01)
     thr_best = float(best_thr["threshold"])
 
@@ -426,7 +426,7 @@ def should_promote(
     new_metrics: dict,
     old_metrics: dict | None,
     primary: str = "auc_val",
-    secondary: str = "f1@best",   # ✅ so theo threshold tốt nhất
+    secondary: str = "f1@best",   # compare using the best threshold
     min_delta: float = 1e-6,
 ) -> tuple[bool, dict]:
     if old_metrics is None:
@@ -512,7 +512,7 @@ def promote_model_if_better(
 
         result["backup_dir"] = bdir
 
-    # atomic copy -> replace (giữ lại candidate để trace)
+    # atomic copy -> replace (keep candidate artifacts for traceability)
     _atomic_copy_replace(candidate_model, prod_model)
     _atomic_copy_replace(candidate_feature_cols, prod_feature_cols)
     _atomic_copy_replace(candidate_metrics, prod_metrics)
@@ -534,7 +534,7 @@ def predict_to_output_json(
 ) -> dict:
     df = _load_table(data_path)
 
-    # key ưu tiên phone
+    # Prefer phone as the key column
     if "phone" in df.columns:
         key_col = "phone"
     elif "report" in df.columns:
@@ -542,13 +542,13 @@ def predict_to_output_json(
     else:
         raise ValueError("Không thấy cột key 'phone' hoặc 'report' trong data_path.")
 
-    # load feature cols
+    # Load feature columns
     feat_obj = _read_json(feature_cols_path)
     feature_cols = feat_obj["cols"] if isinstance(feat_obj, dict) and "cols" in feat_obj else feat_obj
     if not isinstance(feature_cols, list) or not feature_cols:
         raise ValueError(f"feature_cols_path không hợp lệ: {feature_cols_path}")
 
-    # ✅ auto threshold nếu chưa truyền
+    # Auto-select threshold if not explicitly provided
     if threshold is None and metrics_path:
         m = _read_json(metrics_path)
         if isinstance(m, dict) and m.get("threshold_best") is not None:
@@ -556,17 +556,17 @@ def predict_to_output_json(
     if threshold is None:
         threshold = 0.5
 
-    # chuẩn bị X giống train: drop phone + Score + label
+    # Prepare X exactly like training: drop phone + Score + label
     drop_cols = [c for c in [key_col, "phone", "report", "Score", "Spam", label_col] if c in df.columns]
     X_df = df.drop(columns=drop_cols, errors="ignore").copy()
 
-    # align cột
+    # Align columns
     for c in feature_cols:
         if c not in X_df.columns:
             X_df[c] = 0
     X_df = X_df[feature_cols]
 
-    # numeric, giữ NaN
+    # Numeric conversion while keeping NaN
     for c in X_df.columns:
         X_df[c] = pd.to_numeric(X_df[c], errors="coerce")
     X_df = X_df.select_dtypes(include=["number"]).astype(np.float32)
