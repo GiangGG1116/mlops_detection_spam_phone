@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +23,7 @@ class DataConfig:
     changed_rows_csv: Path
     base_train_dataset: Path
     merged_train_dataset: Path
+    run_manifest_dir: Path
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,23 @@ class PipelineSettings:
     tune_trials: int = 5
     tune_timeout_seconds: int = 1800
     min_delta: float = 1e-6
+    min_train_rows: int = 10
+    min_auc_to_promote: float = 0.5
+
+
+@dataclass(frozen=True)
+class MlflowConfig:
+    enabled: bool = True
+    tracking_uri: str = "http://localhost:5000"
+    experiment_name: str = "spam_phone_detection"
+    log_artifacts: bool = False
+
+
+@dataclass(frozen=True)
+class ApiConfig:
+    host: str = "0.0.0.0"
+    port: int = 8000
+    reload: bool = False
 
 
 @dataclass(frozen=True)
@@ -50,6 +68,8 @@ class PipelineConfig:
     data: DataConfig
     model: ModelConfig
     settings: PipelineSettings
+    mlflow: MlflowConfig = field(default_factory=MlflowConfig)
+    api: ApiConfig = field(default_factory=ApiConfig)
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
@@ -76,6 +96,14 @@ def _to_float(value: Any, default: float) -> float:
         return default
 
 
+def _to_bool(value: Any, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).lower() in ("true", "1", "yes")
+
+
 def load_config(config_path: str | Path | None = None) -> PipelineConfig:
     config_file = resolve_path(
         config_path or os.getenv("PIPELINE_CONFIG", str(DEFAULT_CONFIG_FILE))
@@ -85,6 +113,8 @@ def load_config(config_path: str | Path | None = None) -> PipelineConfig:
     data_raw = raw.get("data") or {}
     model_raw = raw.get("model") or {}
     settings_raw = raw.get("settings") or {}
+    mlflow_raw = raw.get("mlflow") or {}
+    api_raw = raw.get("api") or {}
 
     data = DataConfig(
         report_source=resolve_path(
@@ -120,6 +150,9 @@ def load_config(config_path: str | Path | None = None) -> PipelineConfig:
         merged_train_dataset=resolve_path(
             data_raw.get("merged_train_dataset", "data/train/label_merged.csv")
         ),
+        run_manifest_dir=resolve_path(
+            data_raw.get("run_manifest_dir", "data/runs")
+        ),
     )
 
     model = ModelConfig(
@@ -151,6 +184,29 @@ def load_config(config_path: str | Path | None = None) -> PipelineConfig:
         tune_trials=_to_int(settings_raw.get("tune_trials"), 5),
         tune_timeout_seconds=_to_int(settings_raw.get("tune_timeout_seconds"), 1800),
         min_delta=_to_float(settings_raw.get("min_delta"), 1e-6),
+        min_train_rows=_to_int(settings_raw.get("min_train_rows"), 10),
+        min_auc_to_promote=_to_float(settings_raw.get("min_auc_to_promote"), 0.5),
     )
 
-    return PipelineConfig(data=data, model=model, settings=settings)
+    mlflow_cfg = MlflowConfig(
+        enabled=_to_bool(mlflow_raw.get("enabled"), True),
+        tracking_uri=str(mlflow_raw.get("tracking_uri", "http://localhost:5000")),
+        experiment_name=str(
+            mlflow_raw.get("experiment_name", "spam_phone_detection")
+        ),
+        log_artifacts=_to_bool(mlflow_raw.get("log_artifacts"), False),
+    )
+
+    api_cfg = ApiConfig(
+        host=str(api_raw.get("host", "0.0.0.0")),
+        port=_to_int(api_raw.get("port"), 8000),
+        reload=_to_bool(api_raw.get("reload"), False),
+    )
+
+    return PipelineConfig(
+        data=data,
+        model=model,
+        settings=settings,
+        mlflow=mlflow_cfg,
+        api=api_cfg,
+    )

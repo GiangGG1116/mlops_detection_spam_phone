@@ -7,19 +7,26 @@ __pycache__/
 .venv/
 venv/
 
+# Environment variables — NEVER commit .env
+.env
+
 # Runtime artifacts
-data/**
 data/predictions/*.json
 data/predictions/*.jsonl
 data/predictions/*.csv
 data/train/feedback_labels.csv
 data/train/changed_rows.csv
 data/train/label_merged.csv
+data/runs/
 
 # Model artifacts
 models/candidates/
 models/archive/
 models/best_xgb_params.json
+models/production/
+
+# MLflow run data (server stores these)
+mlruns/
 
 # OS/editor
 .DS_Store

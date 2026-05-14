@@ -12,6 +12,8 @@ data:
   base_train_dataset: data/train/label.csv
   merged_train_dataset: data/train/label_merged.csv
 
+  run_manifest_dir: data/runs
+
 model:
   production_model: models/production/xgb.pkl
   production_feature_columns: models/production/feature_columns.json
@@ -29,3 +31,17 @@ settings:
   tune_trials: 5
   tune_timeout_seconds: 1800
   min_delta: 0.000001
+
+  min_train_rows: 10
+  min_auc_to_promote: 0.5
+
+mlflow:
+  enabled: true
+  tracking_uri: "http://mlflow:5000"   # override with PIPELINE_CONFIG or env MLFLOW_TRACKING_URI
+  experiment_name: spam_phone_detection
+  log_artifacts: false
+
+api:
+  host: "0.0.0.0"
+  port: 8000
+  reload: false

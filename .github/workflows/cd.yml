@@ -1,0 +1,126 @@
+name: CD
+
+on:
+  push:
+    branches: ["main"]  # Deploy only on main branch merges
+  workflow_dispatch:     # Allow manual trigger
+
+env:
+  REGISTRY: docker.io
+  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/spam-phone-api
+
+jobs:
+  # ── 1. Run full test suite ──────────────────────────────────────────────────
+  test:
+    name: Tests (pre-deploy gate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        run: python -m unittest discover -s tests -p "test_*.py" -v
+
+  # ── 2. Build & push Docker image ───────────────────────────────────────────
+  build-and-push:
+    name: Build & Push Image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: test
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+      sha_tag: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract metadata (tags & labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ── 3. Deploy to server via SSH ────────────────────────────────────────────
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: build-and-push
+    environment: production   # GitHub Environment with protection rules
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_PORT || 22 }}
+          script: |
+            set -e
+
+            DEPLOY_DIR="${{ secrets.DEPLOY_DIR || '/opt/spam-phone' }}"
+            IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}"
+
+            echo "==> Pulling new image: $IMAGE"
+            docker pull "$IMAGE"
+
+            echo "==> Switching to deploy dir"
+            cd "$DEPLOY_DIR"
+
+            echo "==> Updating docker-compose image tag"
+            # Update API image in .env so compose uses the new SHA tag
+            sed -i "s|^API_IMAGE=.*|API_IMAGE=$IMAGE|" .env || echo "API_IMAGE=$IMAGE" >> .env
+
+            echo "==> Restarting API service (zero-downtime rolling restart)"
+            docker compose pull api
+            docker compose up -d --no-deps --remove-orphans api
+
+            echo "==> Waiting for health check..."
+            sleep 10
+            docker compose ps api
+
+            echo "==> Verifying /health endpoint"
+            curl -fs http://localhost:8000/health | python3 -c \
+              "import sys,json; d=json.load(sys.stdin); assert d['status']=='ok', d"
+
+            echo "✅ Deploy successful: $IMAGE"
+
+      - name: Notify success
+        if: success()
+        run: |
+          echo "🚀 Deployed ${{ env.IMAGE_NAME }}:sha-${{ github.sha }} successfully"

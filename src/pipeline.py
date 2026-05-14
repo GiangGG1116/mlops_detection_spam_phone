@@ -41,8 +41,9 @@ def _load_threshold(metrics_path: Path, default: float = 0.5) -> float:
 
 
 class SpamDetectionPipeline:
-    def __init__(self, config: PipelineConfig | None = None):
+    def __init__(self, config: PipelineConfig | None = None, run_id: str | None = None):
         self.config = config or load_config()
+        self.run_id = run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
         self._prepare_dirs()
 
     def _prepare_dirs(self) -> None:
@@ -226,3 +227,36 @@ class SpamDetectionPipeline:
             "dataset": dataset_result,
             "training": train_result,
         }
+
+    # ------------------------------------------------------------------
+    # Run manifest
+    # ------------------------------------------------------------------
+    def emit_run_manifest(
+        self,
+        command: str,
+        status: str = "success",
+        result: dict | None = None,
+        error: Exception | None = None,
+    ) -> Path:
+        """Write a JSON run-manifest to data/runs/<run_id>.json and return path."""
+        manifest_dir = self.config.data.run_manifest_dir
+        ensure_dir(manifest_dir)
+        manifest_path = manifest_dir / f"{self.run_id}_{command}.json"
+
+        payload: dict = {
+            "run_id": self.run_id,
+            "command": command,
+            "status": status,
+            "timestamp": datetime.now().isoformat(),
+        }
+        if result is not None:
+            payload["result"] = result
+        if error is not None:
+            payload["error"] = {"type": type(error).__name__, "message": str(error)}
+
+        ensure_parent(manifest_path)
+        with manifest_path.open("w", encoding="utf-8") as fh:
+            import json
+            json.dump(payload, fh, ensure_ascii=False, indent=2)
+
+        return manifest_path
