@@ -7,8 +7,10 @@ from pathlib import Path
 import pandas as pd
 
 from .core.config import PipelineConfig, load_config
+from .core.mlflow_tracker import MLflowTracker
 from .core.paths import ensure_dir, ensure_parent
-from .core.utils import normalize_phone
+from .core.utils import normalize_phone, load_threshold
+from .core.validation import validate_training_data
 from .steps.dataset.make_dataset import (
     export_last_n_days_call_histories,
     export_last_n_days_report,
@@ -24,26 +26,13 @@ from .steps.training.train import (
 )
 
 
-def _load_threshold(metrics_path: Path, default: float = 0.5) -> float:
-    if not metrics_path.exists():
-        return default
-    with metrics_path.open("r", encoding="utf-8") as f:
-        metrics = json.load(f)
-
-    threshold = metrics.get("threshold_best", default)
-    if isinstance(threshold, dict):
-        threshold = threshold.get("threshold", default)
-
-    try:
-        return float(threshold)
-    except (TypeError, ValueError):
-        return default
-
-
 class SpamDetectionPipeline:
     def __init__(self, config: PipelineConfig | None = None, run_id: str | None = None):
+        from .core.logging import get_logger
         self.config = config or load_config()
         self.run_id = run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.logger = get_logger("pipeline")
+        self.tracker = MLflowTracker(self.config.mlflow, self.run_id, self.logger)
         self._prepare_dirs()
 
     def _prepare_dirs(self) -> None:
@@ -59,32 +48,39 @@ class SpamDetectionPipeline:
         ensure_parent(self.config.model.best_params_json)
 
     def run_inference(self, history_source: str | None = None) -> dict:
-        history_input = history_source or str(self.config.data.history_source)
-        exported_history = export_last_n_days_call_histories(
-            in_path=history_input,
-            out_dir=str(self.config.data.history_source.parent),
-            days=self.config.settings.history_days,
-            tz=self.config.settings.timezone,
-        )
+        self.tracker.start(run_name=f"infer_{self.run_id}")
+        try:
+            history_input = history_source or str(self.config.data.history_source)
+            exported_history = export_last_n_days_call_histories(
+                in_path=history_input,
+                out_dir=str(self.config.data.history_source.parent),
+                days=self.config.settings.history_days,
+                tz=self.config.settings.timezone,
+            )
 
-        threshold = _load_threshold(self.config.model.production_metrics)
-        predict(
-            load_data=str(exported_history),
-            load_model=str(self.config.model.production_model),
-            return_output=str(self.config.data.predictions_json),
-            feature_cols=str(self.config.model.production_feature_columns),
-            debug_csv=str(self.config.data.prediction_debug_csv),
-            external_yaml=str(self.config.data.external_data_yaml),
-            threshold=threshold,
-            agg_by_phone=True,
-        )
+            threshold = load_threshold(self.config.model.production_metrics)
+            predict(
+                load_data=str(exported_history),
+                load_model=str(self.config.model.production_model),
+                return_output=str(self.config.data.predictions_json),
+                feature_cols=str(self.config.model.production_feature_columns),
+                debug_csv=str(self.config.data.prediction_debug_csv),
+                external_yaml=str(self.config.data.external_data_yaml),
+                threshold=threshold,
+                agg_by_phone=True,
+            )
 
-        return {
-            "history_export": str(exported_history),
-            "predictions_json": str(self.config.data.predictions_json),
-            "prediction_debug_csv": str(self.config.data.prediction_debug_csv),
-            "threshold_used": threshold,
-        }
+            result = {
+                "history_export": str(exported_history),
+                "predictions_json": str(self.config.data.predictions_json),
+                "prediction_debug_csv": str(self.config.data.prediction_debug_csv),
+                "threshold_used": threshold,
+            }
+            self.tracker.log_params({"threshold_used": threshold})
+            self.tracker.log_artifacts(self.config.data.predictions_json)
+            return result
+        finally:
+            self.tracker.end()
 
     def run_feedback_labeling(self, report_source: str | None = None) -> dict:
         report_input = report_source or str(self.config.data.report_source)
@@ -155,61 +151,81 @@ class SpamDetectionPipeline:
         }
 
     def train_and_promote(self, train_data_path: str | None = None) -> dict:
-        dataset_path = Path(train_data_path) if train_data_path else self.config.data.merged_train_dataset
-        if not dataset_path.exists():
-            dataset_path = self.config.data.base_train_dataset
+        self.tracker.start(run_name=f"train_{self.run_id}")
+        try:
+            dataset_path = Path(train_data_path) if train_data_path else self.config.data.merged_train_dataset
+            if not dataset_path.exists():
+                dataset_path = self.config.data.base_train_dataset
 
-        tune_result = tune_xgb_params(
-            data_path=str(dataset_path),
-            n_trials=self.config.settings.tune_trials,
-            timeout=self.config.settings.tune_timeout_seconds,
-            save_best_params=str(self.config.model.best_params_json),
-        )
+            import pandas as pd
+            df_train = pd.read_parquet(dataset_path)
+            val_res = validate_training_data(df_train, label_col="label")
+            if not val_res["valid"]:
+                self.logger.warning(f"Data validation failed: {val_res['issues']}")
+                # We could raise here, but for now we'll just log
+            
+            tune_result = tune_xgb_params(
+                data_path=str(dataset_path),
+                n_trials=self.config.settings.tune_trials,
+                timeout=self.config.settings.tune_timeout_seconds,
+                save_best_params=str(self.config.model.best_params_json),
+            )
 
-        best_params = tune_result["best_params"]
-        run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-        candidate_dir = self.config.model.candidates_dir / run_id
-        ensure_dir(candidate_dir)
+            best_params = tune_result["best_params"]
+            self.tracker.log_params(best_params, prefix="tune")
+            self.tracker.log_metrics({"tune_best_auc": tune_result["best_auc"]})
 
-        cand_model = candidate_dir / "xgb.pkl"
-        cand_cols = candidate_dir / "feature_columns.json"
-        cand_metrics = candidate_dir / "train_metrics.json"
+            run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+            candidate_dir = self.config.model.candidates_dir / run_id
+            ensure_dir(candidate_dir)
 
-        train_result = train_xgb_for_your_schema(
-            data_path=str(dataset_path),
-            out_model=str(cand_model),
-            out_feature_cols=str(cand_cols),
-            out_metrics=str(cand_metrics),
-            n_estimators=best_params.get("n_estimators", 3000),
-            max_depth=best_params.get("max_depth", 6),
-            learning_rate=best_params.get("learning_rate", 0.05),
-            subsample=best_params.get("subsample", 0.8),
-            colsample_bytree=best_params.get("colsample_bytree", 0.8),
-            min_child_weight=best_params.get("min_child_weight", 1.0),
-            gamma=best_params.get("gamma", 0.0),
-            reg_alpha=best_params.get("reg_alpha", 0.0),
-            reg_lambda=best_params.get("reg_lambda", 1.0),
-            max_bin=best_params.get("max_bin", 256),
-        )
+            cand_model = candidate_dir / "xgb.pkl"
+            cand_cols = candidate_dir / "feature_columns.json"
+            cand_metrics = candidate_dir / "train_metrics.json"
 
-        promote_result = promote_model_if_better(
-            candidate_model=str(cand_model),
-            candidate_feature_cols=str(cand_cols),
-            candidate_metrics=str(cand_metrics),
-            prod_model=str(self.config.model.production_model),
-            prod_feature_cols=str(self.config.model.production_feature_columns),
-            prod_metrics=str(self.config.model.production_metrics),
-            archive_dir=str(self.config.model.archive_dir),
-            min_delta=self.config.settings.min_delta,
-        )
+            train_result = train_xgb_for_your_schema(
+                data_path=str(dataset_path),
+                out_model=str(cand_model),
+                out_feature_cols=str(cand_cols),
+                out_metrics=str(cand_metrics),
+                n_estimators=best_params.get("n_estimators", 3000),
+                max_depth=best_params.get("max_depth", 6),
+                learning_rate=best_params.get("learning_rate", 0.05),
+                subsample=best_params.get("subsample", 0.8),
+                colsample_bytree=best_params.get("colsample_bytree", 0.8),
+                min_child_weight=best_params.get("min_child_weight", 1.0),
+                gamma=best_params.get("gamma", 0.0),
+                reg_alpha=best_params.get("reg_alpha", 0.0),
+                reg_lambda=best_params.get("reg_lambda", 1.0),
+                max_bin=best_params.get("max_bin", 256),
+            )
 
-        return {
-            "train_data": str(dataset_path),
-            "candidate_dir": str(candidate_dir),
-            "tune": tune_result,
-            "train": train_result,
-            "promote": promote_result,
-        }
+            promote_result = promote_model_if_better(
+                candidate_model=str(cand_model),
+                candidate_feature_cols=str(cand_cols),
+                candidate_metrics=str(cand_metrics),
+                prod_model=str(self.config.model.production_model),
+                prod_feature_cols=str(self.config.model.production_feature_columns),
+                prod_metrics=str(self.config.model.production_metrics),
+                archive_dir=str(self.config.model.archive_dir),
+                min_delta=self.config.settings.min_delta,
+            )
+
+            with open(cand_metrics, "r") as f:
+                metrics_data = json.load(f)
+            self.tracker.log_metrics(metrics_data, prefix="train")
+            self.tracker.log_params({"promoted": promote_result["promoted"]})
+            self.tracker.log_artifacts(candidate_dir)
+
+            return {
+                "train_data": str(dataset_path),
+                "candidate_dir": str(candidate_dir),
+                "tune": tune_result,
+                "train": train_result,
+                "promote": promote_result,
+            }
+        finally:
+            self.tracker.end()
 
     def run_full(
         self,
@@ -256,7 +272,6 @@ class SpamDetectionPipeline:
 
         ensure_parent(manifest_path)
         with manifest_path.open("w", encoding="utf-8") as fh:
-            import json
             json.dump(payload, fh, ensure_ascii=False, indent=2)
 
         return manifest_path

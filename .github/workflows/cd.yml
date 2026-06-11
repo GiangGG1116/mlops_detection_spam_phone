@@ -111,14 +111,31 @@ jobs:
             docker compose up -d --no-deps --remove-orphans api
 
             echo "==> Waiting for health check..."
-            sleep 10
-            docker compose ps api
+            # Perform health check
+            echo "Performing health check..."
+            max_retries=12
+            count=0
+            healthy=false
+            while [ $count -lt $max_retries ]; do
+              if curl -s http://127.0.0.1:${{ secrets.API_PORT || 8000 }}/health | grep -q '"status":"ok"'; then
+                echo "Health check passed!"
+                healthy=true
+                break
+              fi
+              echo "Waiting for service to be healthy... ($((count+1))/$max_retries)"
+              sleep 5
+              count=$((count+1))
+            done
 
-            echo "==> Verifying /health endpoint"
-            curl -fs http://localhost:8000/health | python3 -c \
-              "import sys,json; d=json.load(sys.stdin); assert d['status']=='ok', d"
-
-            echo "✅ Deploy successful: $IMAGE"
+            if [ "$healthy" = false ]; then
+              echo "Health check failed after 60 seconds. Rolling back..."
+              docker stop $CONTAINER_NAME || true
+              docker rm $CONTAINER_NAME || true
+              # Restart old container if we had one (simplified rollback)
+              # For a true rollback we should tag the previous image, but here we just restart if possible.
+              echo "Deployment failed. Manual intervention may be required."
+              exit 1
+            fi
 
       - name: Notify success
         if: success()

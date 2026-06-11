@@ -1,30 +1,27 @@
-FROM python:3.11-slim
+# Builder stage
+FROM python:3.11-slim as builder
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+WORKDIR /opt/spam-phone
 
-WORKDIR /app
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends libgomp1 curl \
-    && rm -rf /var/lib/apt/lists/* \
-    # Create non-root user for security
-    && useradd --create-home --shell /bin/bash appuser
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --upgrade pip && pip install -r requirements.txt
+RUN pip install --user --no-cache-dir -r requirements.txt
 
-COPY . .
+# Runtime stage
+FROM python:3.11-slim
 
-# Ensure data / model directories exist and are writable by appuser
-RUN mkdir -p data/runs data/predictions data/train models/production models/candidates models/archive \
-    && chown -R appuser:appuser /app
+WORKDIR /opt/spam-phone
 
-USER appuser
+COPY --from=builder /root/.local /root/.local
+ENV PATH=/root/.local/bin:$PATH
+
+COPY src/ src/
+COPY scripts/ scripts/
+COPY configs/ configs/
 
 EXPOSE 8000
 
-# Default: CLI mode. docker-compose overrides this with uvicorn for API mode.
-ENTRYPOINT ["python", "-m", "src.cli"]
-CMD ["--help"]
+CMD ["python", "-m", "scripts.run_api"]

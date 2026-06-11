@@ -70,49 +70,22 @@ COUNTRY_CODES = {
 # =========================
 # Risk rules config
 # =========================
-RISK_CONFIG = {
-    "model_thresholds": [
-        (0.30, 0),
-        (0.50, 1),
-        (0.70, 2),
-        (0.85, 3),
-        (1.01, 4),
-    ],
-    "intl_risk_prefixes": [
-        "224", "231", "232", "247", "252",
-        "255", "370", "371", "375", "381", "563",
-    ],
-    "domestic_risk_prefixes": [
-        "1900",
-        "024", "026", "028",
-    ],
-    "hard_blacklist_numbers": {
-        "+8919008198",
-        "+4422222202",
-        "+22382271520",
-        "+22379262886",
-        "+22375260052",
-        "19003439", "19004510", "19002191", "19003441", "19002170",
-        "19002446", "19001095", "19002190", "19002196", "19004562",
-        "19003440", "19001199",
-        "02439446395", "02499950060", "02499954266", "0249997041",
-        "02444508888", "02499950412", "0249997037", "02499997044",
-        "02499950212", "02499950036", "0249997038", "0249992623",
-        "0249997035", "0249994266", "02499985212", "0245678520",
-        "02499985220", "0249997044",
-        "02899964439", "02856786501", "02899964438", "02899964437",
-        "02873034653", "02899950012", "02873065555", "02899964448",
-        "02822000266", "0287108690", "02899950015", "02899958588",
-        "02871099082", "02899996142",
-    },
-    "level_messages": {
-        0: {"title": "✅ Có vẻ an toàn", "subtitle": "Không phát hiện dấu hiệu bất thường."},
-        1: {"title": "⚠️ Cần chú ý một chút", "subtitle": "Có một vài dấu hiệu lạ, nhưng chưa đủ để xác định là spam."},
-        2: {"title": "⚠️ Có dấu hiệu nghi vấn", "subtitle": "Hệ thống phát hiện nhiều dấu hiệu giống cuộc gọi spam."},
-        3: {"title": "🚫 Nguy cơ cao – Có thể là cuộc gọi lừa đảo", "subtitle": "Số điện thoại này có nhiều đặc điểm trùng với các cuộc gọi spam đã được ghi nhận."},
-        4: {"title": "🛑 Rất có thể là cuộc gọi lừa đảo", "subtitle": "Số này trùng với mẫu hành vi spam/lừa đảo đã được hệ thống ghi nhận trước đó."},
-    },
-}
+import os
+import yaml
+from pathlib import Path
+
+
+def load_risk_config(config_path: str | Path | None = None) -> dict:
+    if config_path is None:
+        from ...core.paths import PROJECT_ROOT
+        config_path = PROJECT_ROOT / "configs/risk_config.yaml"
+    
+    with open(config_path, "r", encoding="utf-8") as f:
+        config = yaml.safe_load(f)
+    return config
+
+# Load default config for backward compatibility
+RISK_CONFIG = load_risk_config()
 
 
 # =========================
@@ -257,12 +230,13 @@ def parse_csv_text_to_rows(csv_text: str) -> List[Dict[str, Any]]:
 # =========================
 # Risk evaluation logic
 # =========================
-def get_model_level(score: float, config: dict = RISK_CONFIG) -> int:
-    thresholds = config["model_thresholds"]
+def get_model_level(score: float, config: dict | None = None) -> int:
+    cfg = config or RISK_CONFIG
+    thresholds = cfg.get("model_thresholds", [])
     for threshold, level in thresholds:
         if score < threshold:
             return level
-    return thresholds[-1][1]
+    return thresholds[-1][1] if thresholds else 0
 
 
 def get_rule_level(
@@ -275,54 +249,58 @@ def get_rule_level(
     frequency_per_day: float,
     callback_rate: float,
     mostly_out_of_business_hour: bool,
-    config: dict = RISK_CONFIG,
+    config: dict | None = None,
 ) -> Tuple[int, List[str]]:
+    cfg = config or RISK_CONFIG
     reasons: List[str] = []
     level = 0
+    rules = cfg.get("rule_levels", {})
 
-    if phone in config["hard_blacklist_numbers"]:
+    if phone in cfg.get("hard_blacklist_numbers", []):
         reasons.append("Số này thuộc danh sách cảnh báo lừa đảo được công bố.")
-        return 4, reasons
+        return rules.get("hard_blacklist", 4), reasons
 
     if is_international:
         intl_prefix = prefix
-        if intl_prefix in config["intl_risk_prefixes"]:
-            level = max(level, 3)
+        if intl_prefix in cfg.get("intl_risk_prefixes", []):
+            level = max(level, rules.get("intl_prefix_boost_to", 3))
             reasons.append(f"Đầu số quốc tế {intl_prefix} có nhiều cảnh báo lừa đảo.")
         else:
-            level = max(level, 1)
+            level = max(level, rules.get("intl_base", 2))
             reasons.append("Cuộc gọi từ số quốc tế, cần cảnh giác.")
 
     domestic_hit = None
-    for dp in config["domestic_risk_prefixes"]:
+    for dp in cfg.get("domestic_risk_prefixes", []):
         if prefix.startswith(dp) or phone.startswith(dp):
             domestic_hit = dp
             break
 
+    behavior = cfg.get("behavior_rules", {})
+
     if domestic_hit is not None:
-        if total_call >= 2 and avg_duration < 5:
-            level = max(level, 3)
+        if total_call >= behavior.get("short_call_min_total", 2) and avg_duration < behavior.get("short_call_seconds", 5):
+            level = max(level, rules.get("domestic_short_call_boost_to", 3))
             reasons.append(f"Đầu số {domestic_hit} với nhiều cuộc gọi rất ngắn giống hành vi nháy máy.")
         else:
-            level = max(level, 2)
+            level = max(level, rules.get("domestic_prefix_base", 2))
             reasons.append(f"Đầu số {domestic_hit} thường xuất hiện trong các cuộc gọi nghi vấn.")
 
-    if total_call >= 5:
+    if total_call >= behavior.get("miss_ratio_min_total", 5):
         miss_ratio = miss_call / total_call if total_call > 0 else 0.0
-        if miss_ratio > 0.6:
-            level = max(level, 3)
+        if miss_ratio > behavior.get("miss_ratio_high", 0.6):
+            level = max(level, rules.get("behavior_miss_ratio_to", 3))
             reasons.append("Tỷ lệ cuộc gọi nhỡ rất cao, bất thường so với các số thông thường.")
 
-    if frequency_per_day >= 10 and avg_duration < 10:
-        level = max(level, 3)
+    if frequency_per_day >= behavior.get("high_freq_per_day", 10) and avg_duration < behavior.get("high_freq_short_call_seconds", 10):
+        level = max(level, rules.get("behavior_high_freq_to", 3))
         reasons.append("Gọi rất nhiều lần/ngày nhưng thời lượng ngắn, giống pattern spam.")
 
-    if callback_rate < 0.1 and total_call >= 5:
-        level = max(level, 2)
+    if callback_rate < behavior.get("low_callback_rate", 0.1) and total_call >= behavior.get("low_callback_min_total", 5):
+        level = max(level, rules.get("behavior_low_callback_to", 2))
         reasons.append("Rất ít người gọi lại số này, cho thấy mức độ tin cậy thấp.")
 
     if mostly_out_of_business_hour:
-        level = max(level, 2)
+        level = max(level, behavior.get("outside_business_hour_level", 2))
         reasons.append("Cuộc gọi chủ yếu diễn ra ngoài giờ hành chính, cần cảnh giác.")
 
     return level, reasons
@@ -334,15 +312,20 @@ def apply_whitelist_adjustments(
     successful_call_count: int,
     avg_in_duration: float,
     is_international: bool,
+    config: dict | None = None,
 ) -> Tuple[int, int]:
+    cfg = config or RISK_CONFIG
+    adj = cfg.get("whitelist_adjustments", {})
     adjust = 0
+    
     if in_contact:
-        adjust -= 2
-    if successful_call_count >= 5 and avg_in_duration >= 60:
-        adjust -= 1
+        adjust -= adj.get("in_contact_reduce", 2)
+    if successful_call_count >= adj.get("good_history_min_success_calls", 5) and avg_in_duration >= adj.get("good_history_min_avg_in_duration", 60):
+        adjust -= adj.get("good_history_reduce", 1)
 
     raw_level = base_level + adjust
-    final_level = max(1, raw_level) if is_international else max(0, raw_level)
+    intl_min = adj.get("intl_min_level_after_reduce", 1)
+    final_level = max(intl_min, raw_level) if is_international else max(0, raw_level)
     return final_level, adjust
 
 
@@ -350,7 +333,7 @@ def evaluate_phone_risk(
     phone: str,
     model_score: float,
     features: Dict[str, Any],
-    config: dict = RISK_CONFIG,
+    config: dict | None = None,
 ) -> Dict[str, Any]:
     """
     Evaluate the overall risk level of a phone number.
@@ -364,7 +347,8 @@ def evaluate_phone_risk(
     Returns:
         Dict with: final_level, model_level, rule_level, title, subtitle, reasons
     """
-    model_level = get_model_level(model_score, config)
+    cfg = config or RISK_CONFIG
+    model_level = get_model_level(model_score, cfg)
 
     rule_level, rule_reasons = get_rule_level(
         phone=phone,
@@ -376,7 +360,7 @@ def evaluate_phone_risk(
         frequency_per_day=features["frequency_per_day"],
         callback_rate=features["callback_rate"],
         mostly_out_of_business_hour=features["mostly_out_of_business_hour"],
-        config=config,
+        config=cfg,
     )
 
     base_level = max(model_level, rule_level)
@@ -387,9 +371,10 @@ def evaluate_phone_risk(
         successful_call_count=features["successful_call_count"],
         avg_in_duration=features["avg_in_duration"],
         is_international=features["is_international"],
+        config=cfg,
     )
 
-    msg = config["level_messages"][final_level]
+    msg = cfg.get("level_messages", {}).get(str(final_level)) or cfg.get("level_messages", {}).get(final_level, {"title": "Không xác định", "subtitle": ""})
     reasons: List[str] = []
     reasons.append(f"Điểm rủi ro từ mô hình: {model_score:.2f} (Level {model_level}).")
     if rule_level > 0 or rule_reasons:

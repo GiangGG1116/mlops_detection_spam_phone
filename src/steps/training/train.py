@@ -1,16 +1,27 @@
 from __future__ import annotations
 
-import os, json, shutil
+import json
+import os
+import shutil
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import Any, Dict, List
 
+import joblib
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import train_test_split
 from sklearn.metrics import (
-    roc_auc_score, f1_score, precision_score, recall_score,
-    accuracy_score, confusion_matrix
+    accuracy_score,
+    confusion_matrix,
+    f1_score,
+    precision_score,
+    recall_score,
+    roc_auc_score,
 )
+from sklearn.model_selection import train_test_split
+import xgboost as xgb
+
+from ...core.utils import infer_ext, to_float, to_int
+
 import xgboost as xgb
 import joblib
 
@@ -18,17 +29,10 @@ import joblib
 # =========================
 # IO helpers
 # =========================
-def _infer_ext(path: str) -> str:
-    p = str(path).lower()
-    if p.endswith(".parquet"): return "parquet"
-    if p.endswith(".csv"):     return "csv"
-    if p.endswith(".jsonl"):   return "jsonl"
-    if p.endswith(".json"):    return "json"
-    return "csv"
 
 
 def _load_table(path: str) -> pd.DataFrame:
-    ext = _infer_ext(path)
+    ext = infer_ext(path)
     if ext == "parquet": return pd.read_parquet(path)
     if ext == "csv":     return pd.read_csv(path)
     if ext == "jsonl":   return pd.read_json(path, lines=True)
@@ -150,8 +154,12 @@ def tune_xgb_params(
     if len(feature_cols) == 0:
         raise ValueError("Không còn feature numeric nào sau khi drop/convert.")
 
+    X_temp, X_test, y_temp, y_test = train_test_split(
+        X, y, test_size=0.15, random_state=random_state, stratify=y
+    )
+    # Inside tune_xgb_params, we only care about train and val for tuning.
     X_tr, X_va, y_tr, y_va = train_test_split(
-        X, y, test_size=test_size, random_state=random_state, stratify=y
+        X_temp, y_temp, test_size=0.2, random_state=random_state, stratify=y_temp
     )
 
     X_tr_np = X_tr.to_numpy(dtype=np.float32, copy=False)
@@ -315,14 +323,19 @@ def train_xgb_for_your_schema(
     if len(feature_cols) == 0:
         raise ValueError("Không còn feature numeric nào sau khi drop/convert.")
 
+    X_temp, X_test, y_temp, y_test = train_test_split(
+        X, y, test_size=0.15, random_state=random_state, stratify=y
+    )
     X_train, X_val, y_train, y_val = train_test_split(
-        X, y, test_size=test_size, random_state=random_state, stratify=y
+        X_temp, y_temp, test_size=0.2, random_state=random_state, stratify=y_temp
     )
 
     X_train_np = X_train.to_numpy(dtype=np.float32, copy=False)
     X_val_np   = X_val.to_numpy(dtype=np.float32, copy=False)
+    X_test_np  = X_test.to_numpy(dtype=np.float32, copy=False)
     y_train_np = y_train.astype(np.int32, copy=False)
     y_val_np   = y_val.astype(np.int32, copy=False)
+    y_test_np  = y_test.astype(np.int32, copy=False)
 
     spw = _scale_pos_weight(y_train_np)
 
@@ -352,14 +365,15 @@ def train_xgb_for_your_schema(
         verbose=False
     )
 
-    proba = model.predict_proba(X_val_np)[:, 1]
+    proba_test = model.predict_proba(X_test_np)[:, 1]
 
-    # Best threshold by F1
-    best_thr = _find_best_threshold_f1(y_val_np, proba, step=0.01)
+    # Best threshold by F1 on validation set, but evaluate on test set
+    proba_val = model.predict_proba(X_val_np)[:, 1]
+    best_thr = _find_best_threshold_f1(y_val_np, proba_val, step=0.01)
     thr_best = float(best_thr["threshold"])
 
-    pred_05   = (proba >= 0.5).astype(int)
-    pred_best = (proba >= thr_best).astype(int)
+    pred_05   = (proba_test >= 0.5).astype(int)
+    pred_best = (proba_test >= thr_best).astype(int)
 
     metrics = {
         "data_path": data_path,
@@ -369,25 +383,25 @@ def train_xgb_for_your_schema(
         "n_features": int(len(feature_cols)),
         "scale_pos_weight": float(spw),
 
-        "auc_val": float(roc_auc_score(y_val_np, proba)) if len(np.unique(y_val_np)) > 1 else None,
+        "auc_val": float(roc_auc_score(y_test_np, proba_test)) if len(np.unique(y_test_np)) > 1 else None,
         "best_iteration": int(getattr(model, "best_iteration", -1)),
 
         # --- metrics @ 0.5 ---
         "threshold@0.5": 0.5,
-        "accuracy@0.5": float(accuracy_score(y_val_np, pred_05)),
-        "precision@0.5": float(precision_score(y_val_np, pred_05, zero_division=0)),
-        "recall@0.5": float(recall_score(y_val_np, pred_05, zero_division=0)),
-        "f1@0.5": float(f1_score(y_val_np, pred_05, zero_division=0)),
-        "confusion_matrix@0.5": confusion_matrix(y_val_np, pred_05).tolist(),
+        "accuracy@0.5": float(accuracy_score(y_test_np, pred_05)),
+        "precision@0.5": float(precision_score(y_test_np, pred_05, zero_division=0)),
+        "recall@0.5": float(recall_score(y_test_np, pred_05, zero_division=0)),
+        "f1@0.5": float(f1_score(y_test_np, pred_05, zero_division=0)),
+        "confusion_matrix@0.5": confusion_matrix(y_test_np, pred_05).tolist(),
 
-        # --- metrics @ best threshold ---
+        # --- metrics @ best threshold (applied on test set) ---
         "threshold_best": thr_best,
         "threshold_search_step": float(best_thr["step"]),
-        "accuracy@best": float(best_thr["accuracy"]),
-        "precision@best": float(best_thr["precision"]),
-        "recall@best": float(best_thr["recall"]),
-        "f1@best": float(best_thr["f1"]),
-        "confusion_matrix@best": best_thr["confusion_matrix"],
+        "accuracy@best": float(accuracy_score(y_test_np, pred_best)),
+        "precision@best": float(precision_score(y_test_np, pred_best, zero_division=0)),
+        "recall@best": float(recall_score(y_test_np, pred_best, zero_division=0)),
+        "f1@best": float(f1_score(y_test_np, pred_best, zero_division=0)),
+        "confusion_matrix@best": confusion_matrix(y_test_np, pred_best).tolist(),
     }
 
     os.makedirs(os.path.dirname(out_model) or ".", exist_ok=True)
@@ -520,73 +534,4 @@ def promote_model_if_better(
     return result
 
 
-# =========================
-# Predict -> output.json (auto threshold_best)
-# =========================
-def predict_to_output_json(
-    data_path: str,
-    model_path: str,
-    feature_cols_path: str,
-    out_json: str,
-    label_col: str = "label",
-    threshold: float | None = None,
-    metrics_path: str | None = None,
-) -> dict:
-    df = _load_table(data_path)
 
-    # Prefer phone as the key column
-    if "phone" in df.columns:
-        key_col = "phone"
-    elif "report" in df.columns:
-        key_col = "report"
-    else:
-        raise ValueError("Không thấy cột key 'phone' hoặc 'report' trong data_path.")
-
-    # Load feature columns
-    feat_obj = _read_json(feature_cols_path)
-    feature_cols = feat_obj["cols"] if isinstance(feat_obj, dict) and "cols" in feat_obj else feat_obj
-    if not isinstance(feature_cols, list) or not feature_cols:
-        raise ValueError(f"feature_cols_path không hợp lệ: {feature_cols_path}")
-
-    # Auto-select threshold if not explicitly provided
-    if threshold is None and metrics_path:
-        m = _read_json(metrics_path)
-        if isinstance(m, dict) and m.get("threshold_best") is not None:
-            threshold = float(m["threshold_best"])
-    if threshold is None:
-        threshold = 0.5
-
-    # Prepare X exactly like training: drop phone + Score + label
-    drop_cols = [c for c in [key_col, "phone", "report", "Score", "Spam", label_col] if c in df.columns]
-    X_df = df.drop(columns=drop_cols, errors="ignore").copy()
-
-    # Align columns
-    for c in feature_cols:
-        if c not in X_df.columns:
-            X_df[c] = 0
-    X_df = X_df[feature_cols]
-
-    # Numeric conversion while keeping NaN
-    for c in X_df.columns:
-        X_df[c] = pd.to_numeric(X_df[c], errors="coerce")
-    X_df = X_df.select_dtypes(include=["number"]).astype(np.float32)
-
-    X = X_df.to_numpy(dtype=np.float32, copy=False)
-
-    model = joblib.load(model_path)
-    y_score = model.predict_proba(X)[:, 1]
-    y_pred = (y_score >= float(threshold)).astype(int)
-
-    ids = df[key_col].astype(str).tolist()
-    key_name = "phone" if key_col == "phone" else "report"
-
-    output = [
-        {key_name: _id, "Spam": int(p), "Score": float(s), "threshold": float(threshold)}
-        for _id, p, s in zip(ids, y_pred.tolist(), y_score.tolist())
-    ]
-
-    os.makedirs(os.path.dirname(out_json) or ".", exist_ok=True)
-    with open(out_json, "w", encoding="utf-8") as f:
-        json.dump(output, f, ensure_ascii=False, indent=2)
-
-    return {"out_json": out_json, "n": len(output), "threshold_used": float(threshold), "sample": output[:5], "key": key_name}

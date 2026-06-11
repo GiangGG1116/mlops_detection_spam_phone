@@ -7,26 +7,16 @@ import joblib
 import json
 import os
 
+import os
+
 from typing import Optional, List, Dict, Any
-
-
-warnings.filterwarnings("ignore")
 
 from ..features.build_feature_duckdb import build_features_duckdb
 from ...core.config import load_config
+from ...core.utils import infer_ext
 
 
-def infer_ext(path: str) -> str:
-    p = str(path).lower()
-    if p.endswith(".parquet"):
-        return "parquet"
-    if p.endswith(".csv"):
-        return "csv"
-    if p.endswith(".jsonl"):
-        return "jsonl"
-    if p.endswith(".json"):
-        return "json"
-    return "parquet"
+
 
 
 def load_feature_cols(path: str):

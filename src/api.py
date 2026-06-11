@@ -12,22 +12,7 @@ from pydantic import BaseModel, Field
 from .core.config import PipelineConfig, load_config
 from .core.logging import get_logger
 from .core.paths import ensure_parent, resolve_path
-
-
-def _load_threshold(metrics_path: Path, default: float = 0.5) -> float:
-    if not metrics_path.exists():
-        return default
-    with metrics_path.open("r", encoding="utf-8") as f:
-        metrics = json.load(f)
-
-    threshold = metrics.get("threshold_best", default)
-    if isinstance(threshold, dict):
-        threshold = threshold.get("threshold", default)
-
-    try:
-        return float(threshold)
-    except (TypeError, ValueError):
-        return default
+from .core.utils import load_threshold
 
 
 def _new_api_run_id() -> str:
@@ -84,6 +69,22 @@ def create_app(config: PipelineConfig | None = None) -> FastAPI:
             "metrics_exists": cfg.model.production_metrics.exists(),
         }
 
+    class RiskEvaluationRequest(BaseModel):
+        phone: str
+        model_score: float
+        features: dict[str, Any]
+
+    @app.post("/evaluate/risk")
+    def evaluate_risk_endpoint(req: RiskEvaluationRequest):
+        from src.steps.risk.risk_evaluator import evaluate_phone_risk, load_risk_config
+        # We assume cfg is available globally or we reload risk config, let's just use load_risk_config()
+        risk_cfg = load_risk_config()
+        result = evaluate_phone_risk(req.phone, req.model_score, req.features, risk_cfg)
+        return {
+            "status": "success",
+            "risk_evaluation": result
+        }
+
     @app.post("/predict/file", response_model=PredictFileResponse)
     def predict_file(req: PredictFileRequest) -> PredictFileResponse:
         history_path = resolve_path(req.history_path)
@@ -119,7 +120,7 @@ def create_app(config: PipelineConfig | None = None) -> FastAPI:
         threshold = (
             float(req.threshold)
             if req.threshold is not None
-            else _load_threshold(cfg.model.production_metrics)
+            else load_threshold(cfg.model.production_metrics)
         )
 
         logger.info(

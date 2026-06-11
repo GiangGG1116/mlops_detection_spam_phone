@@ -17,6 +17,7 @@ class DataConfig:
     report_source: Path
     history_source: Path
     external_data_yaml: Path
+    risk_config_yaml: Path
     predictions_json: Path
     prediction_debug_csv: Path
     feedback_label_csv: Path
@@ -82,29 +83,8 @@ def _read_yaml(path: Path) -> dict[str, Any]:
     return payload
 
 
-def _to_int(value: Any, default: int) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _to_float(value: Any, default: float) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _to_bool(value: Any, default: bool) -> bool:
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return value
-    return str(value).lower() in ("true", "1", "yes")
-
-
 def load_config(config_path: str | Path | None = None) -> PipelineConfig:
+    from .utils import to_int, to_float, to_bool
     config_file = resolve_path(
         config_path or os.getenv("PIPELINE_CONFIG", str(DEFAULT_CONFIG_FILE))
     )
@@ -131,6 +111,9 @@ def load_config(config_path: str | Path | None = None) -> PipelineConfig:
         ),
         external_data_yaml=resolve_path(
             data_raw.get("external_data_yaml", "configs/external_data.yml")
+        ),
+        risk_config_yaml=resolve_path(
+            data_raw.get("risk_config_yaml", "configs/risk_config.yaml")
         ),
         predictions_json=resolve_path(
             data_raw.get("predictions_json", "data/predictions/pred_by_phone.json")
@@ -178,29 +161,29 @@ def load_config(config_path: str | Path | None = None) -> PipelineConfig:
     )
 
     settings = PipelineSettings(
-        report_days=_to_int(settings_raw.get("report_days"), 100),
-        history_days=_to_int(settings_raw.get("history_days"), 90),
+        report_days=to_int(settings_raw.get("report_days"), 100),
+        history_days=to_int(settings_raw.get("history_days"), 90),
         timezone=str(settings_raw.get("timezone", "Asia/Ho_Chi_Minh")),
-        tune_trials=_to_int(settings_raw.get("tune_trials"), 5),
-        tune_timeout_seconds=_to_int(settings_raw.get("tune_timeout_seconds"), 1800),
-        min_delta=_to_float(settings_raw.get("min_delta"), 1e-6),
-        min_train_rows=_to_int(settings_raw.get("min_train_rows"), 10),
-        min_auc_to_promote=_to_float(settings_raw.get("min_auc_to_promote"), 0.5),
+        tune_trials=to_int(settings_raw.get("tune_trials"), 5),
+        tune_timeout_seconds=to_int(settings_raw.get("tune_timeout_seconds"), 1800),
+        min_delta=to_float(settings_raw.get("min_delta"), 1e-6),
+        min_train_rows=to_int(settings_raw.get("min_train_rows"), 10),
+        min_auc_to_promote=to_float(settings_raw.get("min_auc_to_promote"), 0.5),
     )
 
     mlflow_cfg = MlflowConfig(
-        enabled=_to_bool(mlflow_raw.get("enabled"), True),
+        enabled=to_bool(mlflow_raw.get("enabled"), True),
         tracking_uri=str(mlflow_raw.get("tracking_uri", "http://localhost:5000")),
         experiment_name=str(
             mlflow_raw.get("experiment_name", "spam_phone_detection")
         ),
-        log_artifacts=_to_bool(mlflow_raw.get("log_artifacts"), False),
+        log_artifacts=to_bool(mlflow_raw.get("log_artifacts"), False),
     )
 
     api_cfg = ApiConfig(
         host=str(api_raw.get("host", "0.0.0.0")),
-        port=_to_int(api_raw.get("port"), 8000),
-        reload=_to_bool(api_raw.get("reload"), False),
+        port=to_int(api_raw.get("port"), 8000),
+        reload=to_bool(api_raw.get("reload"), False),
     )
 
     return PipelineConfig(
