@@ -68,7 +68,7 @@ All operational configurations are managed via YAML files in the `configs/` dire
 
 *Note: Ensure your input parquet files are placed in `data/input/` as defined in `pipeline.yaml`.*
 
-## 🛠 Usage
+## Usage
 
 ### Command Line Interface (CLI)
 
